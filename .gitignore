@@ -1,0 +1,9 @@
+# Brick images (large dataset, not tracked in git)
+data/images/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

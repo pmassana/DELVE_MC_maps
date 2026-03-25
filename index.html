@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DELVE MC Sky Map Explorer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0d0d1a;
+      color: #d0d0e0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 8px 16px;
+      background: #111122;
+      border-bottom: 1px solid #2a2a4a;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    #header h1 {
+      font-size: 14px;
+      font-weight: bold;
+      color: #88aaff;
+      white-space: nowrap;
+    }
+    #status { font-size: 11px; color: #557755; }
+    #cursor-info { font-size: 11px; color: #556688; margin-left: auto; }
+
+    /* ── Main layout ── */
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* ── Map ── */
+    #map-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      cursor: crosshair;
+      background: #050510;
+    }
+    #map-viewport {
+      position: absolute;
+      top: 0; left: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+    #skymap {
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
+    }
+
+    /* ── Side panel ── */
+    #side-panel {
+      width: 360px;
+      min-width: 360px;
+      background: #111122;
+      border-left: 1px solid #2a2a4a;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #panel-header {
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    #brick-name {
+      font-size: 15px;
+      color: #88aaff;
+      margin-bottom: 4px;
+      min-height: 22px;
+    }
+    #brick-coords {
+      font-size: 11px;
+      color: #778899;
+      min-height: 18px;
+    }
+    #distance-info {
+      font-size: 10px;
+      color: #556644;
+      min-height: 16px;
+    }
+
+    #image-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #080810;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+    #brick-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+    #placeholder {
+      color: #334;
+      font-size: 12px;
+      text-align: center;
+      line-height: 1.8;
+      padding: 20px;
+    }
+    #placeholder .icon { font-size: 32px; display: block; margin-bottom: 10px; opacity: 0.4; }
+    #img-loading {
+      position: absolute;
+      color: #446;
+      font-size: 11px;
+      display: none;
+    }
+
+    #panel-footer {
+      padding: 8px 14px;
+      border-top: 1px solid #1a1a2e;
+      font-size: 10px;
+      color: #334;
+      line-height: 1.7;
+    }
+
+    /* Loading overlay */
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(5,5,16,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: #557;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>DELVE MC Sky Map Explorer</h1>
+  <span id="status">Loading bricks data…</span>
+  <span id="cursor-info"></span>
+</div>
+
+<div id="main">
+  <div id="map-container">
+    <div id="loading-overlay">Loading bricks data…</div>
+    <div id="map-viewport">
+      <img id="skymap" src="data/delvemc_y4t2_joint_totalsources.png" alt="Sky Map" draggable="false">
+    </div>
+  </div>
+
+  <div id="side-panel">
+    <div id="panel-header">
+      <div id="brick-name">Click on the map to explore</div>
+      <div id="brick-coords"></div>
+      <div id="distance-info"></div>
+    </div>
+    <div id="image-container">
+      <div id="img-loading">Loading image…</div>
+      <img id="brick-img" alt="Brick image">
+      <div id="placeholder">
+        <span class="icon">✦</span>
+        Click anywhere on the sky map<br>to view the closest brick image
+      </div>
+    </div>
+    <div id="panel-footer">
+      Scroll  →  zoom &nbsp;|&nbsp;
+      Drag  →  pan &nbsp;|&nbsp;
+      Click  →  nearest brick<br>
+      33 005 bricks · DELVE MC Year 4
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// COORDINATE CALIBRATION  (delvemc_y4t2_joint_totalsources.png, 1200×900 px)
+//
+//  Single panel plot area: cols 125–1144, rows 40–799
+//  X-axis (L_MS): 28° at col 125  →  −40° at col 1144  (inverted, decreases right)
+//  Y-axis (B_MS): 30° at row  40  →  −30° at row  799  (decreases downward)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AX_X0 = 125, AX_X1 = 1144;   // plot area column bounds
+const AX_Y0 =  40, AX_Y1 =  799;   // plot area row bounds
+const LMS_LEFT  =  28;              // L_MS at left edge  (col AX_X0)
+const LMS_RIGHT = -40;              // L_MS at right edge (col AX_X1)
+const BMS_TOP   =  30;              // B_MS at top edge   (row AX_Y0)
+const BMS_BOT   = -30;              // B_MS at bottom edge(row AX_Y1)
+
+function imgToCoords(px, py) {
+  const lms = LMS_LEFT  + (px - AX_X0) / (AX_X1 - AX_X0) * (LMS_RIGHT - LMS_LEFT);
+  const bms = BMS_TOP   + (py - AX_Y0) / (AX_Y1 - AX_Y0) * (BMS_BOT   - BMS_TOP);
+  return { lms, bms };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRICK DATA & NEAREST-NEIGHBOUR SEARCH
+// ─────────────────────────────────────────────────────────────────────────────
+
+let bricks = [];         // [{name, lms, bms}, …]
+let bricksLms, bricksBms;  // typed arrays for fast search
+
+function loadBricks() {
+  return fetch('data/bricks.json')
+    .then(r => r.json())
+    .then(data => {
+      bricks = data;
+      // Pre-extract into typed arrays for speed
+      bricksLms = new Float32Array(data.length);
+      bricksBms = new Float32Array(data.length);
+      for (let i = 0; i < data.length; i++) {
+        bricksLms[i] = data[i].lms;
+        bricksBms[i] = data[i].bms;
+      }
+      document.getElementById('status').textContent =
+        `${data.length.toLocaleString()} bricks loaded`;
+      document.getElementById('loading-overlay').style.display = 'none';
+    });
+}
+
+function nearestBrick(lms, bms) {
+  let bestIdx = 0, bestDist = Infinity;
+  for (let i = 0, n = bricksLms.length; i < n; i++) {
+    const dl = bricksLms[i] - lms;
+    const db = bricksBms[i] - bms;
+    const d = dl * dl + db * db;
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+  return { brick: bricks[bestIdx], dist: Math.sqrt(bestDist) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAN / ZOOM
+// ─────────────────────────────────────────────────────────────────────────────
+
+const mapEl    = document.getElementById('map-container');
+const viewport = document.getElementById('map-viewport');
+
+let scale = 1, tx = 0, ty = 0;
+let dragging = false, wasDragged = false;
+let dragStart = {x:0, y:0}, originTrans = {x:0, y:0};
+
+function clampTranslate() {
+  const imgW = 1200 * scale, imgH = 900 * scale;
+  const cw = mapEl.clientWidth, ch = mapEl.clientHeight;
+  // Allow some overshoot so the image can always be positioned meaningfully
+  tx = Math.min(cw * 0.5, Math.max(cw - imgW - cw * 0.5, tx));
+  ty = Math.min(ch * 0.5, Math.max(ch - imgH - ch * 0.5, ty));
+}
+
+function applyTransform() {
+  viewport.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+}
+
+// Initial fit: show full image on load
+function fitImage() {
+  const cw = mapEl.clientWidth, ch = mapEl.clientHeight;
+  const scaleW = cw / 1200, scaleH = ch / 900;
+  scale = Math.min(scaleW, scaleH);
+  tx = (cw - 1650 * scale) / 2;
+  ty = (ch - 1350 * scale) / 2;
+  applyTransform();
+}
+
+window.addEventListener('load', fitImage);
+window.addEventListener('resize', fitImage);
+
+// Wheel zoom
+mapEl.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = mapEl.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const newScale = Math.min(Math.max(scale * factor, 0.15), 30);
+  tx = mx - (mx - tx) * (newScale / scale);
+  ty = my - (my - ty) * (newScale / scale);
+  scale = newScale;
+  clampTranslate();
+  applyTransform();
+}, { passive: false });
+
+// Drag pan
+mapEl.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  dragging = true; wasDragged = false;
+  dragStart = { x: e.clientX, y: e.clientY };
+  originTrans = { x: tx, y: ty };
+  mapEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', e => {
+  if (dragging) {
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) wasDragged = true;
+    tx = originTrans.x + dx;
+    ty = originTrans.y + dy;
+    clampTranslate();
+    applyTransform();
+  }
+
+  // Cursor coordinates readout
+  if (bricks.length) {
+    const rect = mapEl.getBoundingClientRect();
+    const imgX = (e.clientX - rect.left - tx) / scale;
+    const imgY = (e.clientY - rect.top  - ty) / scale;
+    const c = imgToCoords(imgX, imgY);
+    document.getElementById('cursor-info').textContent =
+      `L_MS = ${c.lms.toFixed(2)}°   B_MS = ${c.bms.toFixed(2)}°`;
+  }
+});
+
+window.addEventListener('mouseup', e => {
+  if (e.button !== 0) return;
+  dragging = false;
+  mapEl.style.cursor = 'crosshair';
+});
+
+// Touch support (pan only)
+let lastTouch = null;
+mapEl.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    originTrans = { x: tx, y: ty };
+    wasDragged = false;
+  }
+}, { passive: true });
+mapEl.addEventListener('touchmove', e => {
+  if (e.touches.length === 1 && lastTouch) {
+    const dx = e.touches[0].clientX - lastTouch.x;
+    const dy = e.touches[0].clientY - lastTouch.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) wasDragged = true;
+    tx = originTrans.x + dx;
+    ty = originTrans.y + dy;
+    clampTranslate();
+    applyTransform();
+  }
+}, { passive: true });
+mapEl.addEventListener('touchend', e => {
+  if (!wasDragged && lastTouch && bricks.length) {
+    const t = e.changedTouches[0];
+    handleMapClick(t.clientX, t.clientY);
+  }
+  lastTouch = null;
+}, { passive: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLICK → SHOW BRICK
+// ─────────────────────────────────────────────────────────────────────────────
+
+mapEl.addEventListener('click', e => {
+  if (wasDragged || !bricks.length) return;
+  handleMapClick(e.clientX, e.clientY);
+});
+
+function handleMapClick(clientX, clientY) {
+  const rect = mapEl.getBoundingClientRect();
+  const imgX = (clientX - rect.left - tx) / scale;
+  const imgY = (clientY - rect.top  - ty) / scale;
+  const coords = imgToCoords(imgX, imgY);
+  const { brick, dist } = nearestBrick(coords.lms, coords.bms);
+  showBrick(brick, coords, dist);
+}
+
+function showBrick(brick, clickCoords, dist) {
+  document.getElementById('brick-name').textContent = `Brick: ${brick.name}`;
+  document.getElementById('brick-coords').textContent =
+    `L_MS = ${brick.lms.toFixed(4)}°   B_MS = ${brick.bms.toFixed(4)}°`;
+  document.getElementById('distance-info').textContent =
+    `Distance from click: ${dist.toFixed(3)}°`;
+
+  const imgEl    = document.getElementById('brick-img');
+  const phEl     = document.getElementById('placeholder');
+  const loadEl   = document.getElementById('img-loading');
+
+  imgEl.style.display = 'none';
+  phEl.style.display  = 'none';
+  loadEl.style.display = 'block';
+
+  imgEl.onload = () => {
+    loadEl.style.display = 'none';
+    imgEl.style.display  = 'block';
+  };
+  imgEl.onerror = () => {
+    loadEl.style.display = 'none';
+    phEl.innerHTML = `<span class="icon">✕</span>Image not found<br><small style="color:#446">${brick.name}_comb.png</small>`;
+    phEl.style.display = 'block';
+  };
+  imgEl.src = `data/images/${brick.name}_comb.png`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+loadBricks().catch(() => {
+  document.getElementById('status').textContent = '⚠ Could not load bricks.json';
+  document.getElementById('loading-overlay').textContent =
+    'Error loading data. Make sure you serve this with a local HTTP server.';
+});
+</script>
+</body>
+</html>
